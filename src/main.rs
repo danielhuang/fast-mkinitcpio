@@ -1,4 +1,6 @@
 use std::{
+    env::args,
+    fs::read_dir,
     io::{stdin, BufRead, BufReader, Write},
     path::PathBuf,
     process::{Command, Stdio},
@@ -11,11 +13,32 @@ use dashmap::DashSet;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 fn main() {
-    let kernels: Vec<_> = stdin()
-        .lines()
-        .map(|x| x.unwrap())
-        .filter(|x| x.ends_with("vmlinuz"))
-        .collect();
+    let args: Vec<_> = args().collect();
+    let kernels: Vec<_> = if args.get(1).map(|x| x.as_str()) == Some("--all") {
+        read_dir("/usr/lib/modules")
+            .unwrap()
+            .map(|x| x.unwrap())
+            .filter_map(|x| {
+                let path = x.path();
+                read_dir(path)
+                    .unwrap()
+                    .map(|x| x.unwrap())
+                    .find(|x| x.file_name() == "vmlinuz")
+                    .map(|x| x.path().to_str().unwrap().chars().skip(1).collect())
+            })
+            .collect::<Vec<_>>()
+    } else {
+        stdin()
+            .lines()
+            .map(|x| x.unwrap())
+            .filter(|x| x.ends_with("vmlinuz"))
+            .collect()
+    };
+
+    if kernels.is_empty() {
+        println!("use `fast-mkinitcpio --all` to regenerate");
+        return;
+    }
 
     let stderr_messages = &DashSet::new();
     let suppressed = &AtomicUsize::new(0);
@@ -24,6 +47,8 @@ fn main() {
     let style = &ProgressStyle::with_template("{spinner:.green} {wide_msg}")
         .unwrap()
         .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏");
+
+    let mut children = vec![];
 
     thread::scope(|scope| {
         for kernel in &kernels {
@@ -74,8 +99,15 @@ fn main() {
                     }
                 }
             });
+
+            children.push(child);
         }
     });
+
+    for mut child in children {
+        let status = child.wait().unwrap();
+        assert!(status.success());
+    }
 
     println!("Generation complete!");
     if !stderr_messages.is_empty() {

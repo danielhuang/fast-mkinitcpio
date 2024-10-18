@@ -40,6 +40,7 @@ fn main() {
         return;
     }
 
+    let stdout_messages = &DashSet::new();
     let stderr_messages = &DashSet::new();
     let suppressed = &AtomicUsize::new(0);
 
@@ -80,7 +81,12 @@ fn main() {
 
             scope.spawn(move || {
                 for line in stdout.lines() {
-                    pb.set_message(format!("[{}] {}", kernel, line.unwrap().trim()));
+                    let line = line.unwrap();
+                    let line = line.trim();
+                    pb.set_message(format!("[{}] {}", kernel, line));
+                    if line.contains("hook: [") && stdout_messages.insert(line.to_string()) {
+                        m.suspend(|| println!("[{}] {}", kernel, line));
+                    }
                 }
 
                 pb.finish_with_message(format!("[{kernel}] Done!"));
